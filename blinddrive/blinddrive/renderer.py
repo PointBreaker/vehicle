@@ -83,6 +83,7 @@ class Hud:
     fps: float = 0.0
     edge_hits: int = 0
     seconds_since_bump: float = 999.0
+    detail: str | None = None   # e.g. Jev's confidence and latency for the last decision
 
 
 def _hash(i: int, j: int) -> int:
@@ -189,7 +190,8 @@ class Renderer:
         self._draw_sliders(obs, hud)
         self._draw_script(hud)
         self._draw_top_bar(hud, running=message is None and result is None)
-        self._draw_help()
+        if hud.controller == "human":
+            self._draw_help()
         if message is None and result is None and hud.seconds_since_bump < 0.7:
             message = "Bump!"
         if message:
@@ -517,7 +519,7 @@ class Renderer:
 
     def _draw_script(self, hud: Hud) -> None:
         # The current decision, shown as a tiny Scratch script.
-        x, y = 16, self.h - 150
+        x, y = 16, self.h - 170
         glow = max(0.0, 1.0 - hud.seconds_since_decision / 0.15)
         interval = f"{1000 / self.config.sim.decision_hz:.0f}"
         hat_w = 250
@@ -536,6 +538,11 @@ class Renderer:
         self._block(x, y, 220, 36, color, dark)
         self.screen.blit(self.text("throttle", 22, WHITE), (x + 10, y + 11))
         self._dropdown(x + 82, y + 7, throttle, dark, dark)
+        if hud.detail:
+            t = self.text(hud.detail, 18, INK)
+            rect = pygame.Rect(x, y + 48, t.get_width() + 16, 20)
+            self._round_rect(rect, MONITOR_BG, MONITOR_EDGE, radius=10, width=1)
+            self.screen.blit(t, (x + 8, y + 52))
 
     def _draw_help(self) -> None:
         msg = "W/Up gas (+Shift full)   S/Down brake   Space hard brake   A D / Left Right steer (+Shift hard)   Q E slight"

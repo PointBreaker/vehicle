@@ -279,12 +279,33 @@ class BlindDriveEnv:
 
 
 def run_episode(env: BlindDriveEnv, controller: Controller) -> EpisodeResult:
-    """Headless loop. The GUI runner does exactly the same thing, plus rendering."""
+    """Headless loop. The GUI runner does exactly the same thing, plus rendering.
+
+    Simulated time only advances in ``env.tick()``, so however long ``act`` takes
+    (e.g. a network call), the car waits: latency never affects the outcome.
+    """
     env.reset()
     controller.reset()
     while not env.done:
         if env.decision_due:
-            env.apply_action(controller.act(env.observe()))
+            decide(env, controller)
         env.tick()
     assert env.result is not None
     return env.result
+
+
+def decide(env: BlindDriveEnv, controller: Controller) -> None:
+    """Ask the controller for one decision and submit it."""
+    apply_decision(env, controller, controller.act(env.observe()))
+
+
+def apply_decision(env: BlindDriveEnv, controller: Controller, action: Action) -> None:
+    """Submit an action; attach the controller's own notes (if any) to the log entry.
+
+    ``last_info`` is recorded for auditing only (e.g. model answers, latency);
+    the environment never reads it.
+    """
+    env.apply_action(action)
+    info = getattr(controller, "last_info", None)
+    if info is not None:
+        env.decision_log[-1]["controller_info"] = info

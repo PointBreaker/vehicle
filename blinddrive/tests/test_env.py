@@ -2,7 +2,7 @@ import pytest
 
 from blinddrive.actions import Action, Steering, Throttle
 from blinddrive.config import get_preset, normal
-from blinddrive.controllers import ExternalController, HumanController, ReplayController
+from blinddrive.controllers import HumanController, ReplayController
 from blinddrive.controllers.base import Controller
 from blinddrive.controllers.human import keys_to_action
 from blinddrive.env import BlindDriveEnv, run_episode
@@ -79,9 +79,6 @@ def test_log_roundtrip_and_replay(tmp_path):
 def test_controllers_share_one_interface():
     assert isinstance(HumanController(lambda: set()), Controller)
     assert isinstance(ReplayController([]), Controller)
-    assert isinstance(ExternalController(), Controller)
-    with pytest.raises(NotImplementedError):
-        ExternalController().act(None)
 
 
 def test_human_keys_map_to_standard_actions():

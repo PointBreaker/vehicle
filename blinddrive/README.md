@@ -28,8 +28,7 @@ The human player goes through the exact same interface (`HumanController`), at t
 same decision rate, and the screen draws the road only from the `Observation`
 (except in `--debug`). A human has no extra information and no extra control rate.
 
-There is no AI / LLM / JEV code in this project yet. `ExternalController` is an
-unimplemented stub for the future.
+Jev (TypeSafe AI) plugs in through the very same interface: see [Driving with Jev](#driving-with-jev).
 
 ## Quick start
 
@@ -96,7 +95,9 @@ blinddrive/
     base.py        Controller protocol: reset(), act(observation) -> Action
     human.py       keyboard -> Action
     replay.py      replays a logged action sequence
-    external.py    stub for future AI controllers (NotImplementedError)
+    jev.py         Jev: Observation -> JSON state -> two choice questions -> Action
+  typesafe.py      dependency-free TypeSafe System One API client (+ .env loader)
+  bench.py         CLI: headless multi-seed runs for Jev, summary JSON
   recorder.py      JSONL episode logs + deterministic replay verification
   renderer.py      pygame Scratch-style top-down view (normal mode draws from the Observation only)
   runner.py        CLI entry point
@@ -213,7 +214,60 @@ uv run python -m blinddrive.replay runs/*.jsonl          # re-simulate and check
 uv run python -m blinddrive.runner --replay runs/X.jsonl  # watch it
 ```
 
-## Adding a controller later
+## Driving with Jev
+
+[Jev](https://typesafe.ai) is TypeSafe AI's System One model: it answers typed
+questions about a state with calibrated probabilities. BlindDrive asks it two
+*choice* questions every decision tick: `steering` (7 labels) and `throttle`
+(5 labels). The chosen labels are the Action.
+
+### Setup (once)
+
+```bash
+cd blinddrive
+cp .env.example .env        # then put your key in .env:  TYPESAFE_API_KEY=...
+uv run python -m blinddrive.bench --check      # verifies the key, lists models
+```
+
+### Run
+
+```bash
+uv run python -m blinddrive.runner --controller jev --seed 42        # watch Jev drive
+uv run python -m blinddrive.bench --seeds 1-10 --preset normal       # headless, 10 episodes
+uv run python -m blinddrive.bench --seeds 1-10 --workers 4 --edge crash --model jev-latest
+uv run python -m blinddrive.bench --dry-run --seed 42                # print a request, send nothing
+```
+
+`bench` prints one line per episode, a summary, and writes
+`runs/bench-<time>_<preset>_<model>.json` plus one JSONL log per episode.
+
+### What Jev sees and decides
+
+- **State** (`controllers/jev.py: observation_to_state`): the Observation re-expressed
+  in plain terms — speed, steering angle, heading vs road, distance to each edge,
+  the visible road sampled every 5 m (position in the car frame, direction, curve
+  radius), progress, previous action — plus the public rules (limits, decision
+  interval, edge rule). It is a pure function of the Observation: no seed, no road,
+  nothing beyond the lookahead. `--dry-run` shows exactly what is sent.
+- **Questions** (`build_questions`): each label's description states its exact
+  effect (target wheel angle, acceleration in m/s²).
+- **No fallback.** If the API fails after retries (2 retries with backoff for
+  timeouts, 408/429/5xx) or returns an unknown label, the episode is aborted and
+  reported as an error. There is never a default or heuristic action.
+- **Latency does not count.** Simulated time is paused while waiting for Jev
+  (the GUI keeps rendering and shows "Thinking…"). Real latency is logged.
+- **Cost.** One API call per decision: 4 per simulated second, so roughly 120–200
+  calls per 500 m episode (at most 720 before the 180 s timeout).
+
+### Logs
+
+Each decision line additionally carries `controller_info`: model, request id,
+latency, attempts, token usage, both answers with confidence and full probability
+distributions, and the exact `state` sent. The header stores the questions and
+rules. `python -m blinddrive.replay` verifies Jev logs like any other (including
+aborted ones, up to the point of failure).
+
+## Adding a controller
 
 Implement `reset()` and `act(observation) -> Action`, and run it with
 `run_episode(BlindDriveEnv(config, seed), controller)`. It must not receive the

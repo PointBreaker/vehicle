@@ -38,6 +38,7 @@ uv run python -m blinddrive.runner                    # random seed, normal pres
 uv run python -m blinddrive.runner --seed 42
 uv run python -m blinddrive.runner --seed 42 --preset hard
 uv run python -m blinddrive.runner --seed 42 --debug  # full road visible: development only
+uv run python -m blinddrive.runner --fps 144          # render frame-rate cap (default 120, 0 = uncapped)
 uv run pytest
 ```
 
@@ -59,9 +60,25 @@ Presets: `easy`, `normal`, `hard` (see `blinddrive/config.py`).
 | A / Left, D / Right | steer (hold Shift: hard) |
 | Q / E | slight left / slight right |
 | nothing | coast, straight |
-| Enter | start · R retry same seed · N new seed · Esc quit |
+| Enter / green flag | start (and retry after a run) |
+| R · N · Esc / stop sign | retry same seed · new seed · quit |
 
 Keys are read **only at decision ticks** (every 250 ms), exactly like any other controller.
+
+### Display
+
+The view is a Scratch-style cartoon stage: the road is drawn only from the
+Observation and ends in a cloud at the visibility limit. The grass tufts and
+flowers are placed by a fixed hash of world position, independent of the road,
+so they give a sense of motion without revealing anything about where the road
+goes. The HUD shows the current decision as a little Scratch script
+(`when decision tick → steer … → throttle …`) whose hat block lights up at every
+decision.
+
+Rendering is decoupled from physics: physics always runs at `physics_hz` (60 Hz)
+and decisions at `decision_hz` (4 Hz); the screen is drawn at up to `--fps`
+frames per second, interpolating the car pose between physics ticks. The frame
+rate never changes the simulation or the results.
 
 ## Architecture
 
@@ -79,7 +96,7 @@ blinddrive/
     replay.py      replays a logged action sequence
     external.py    stub for future AI controllers (NotImplementedError)
   recorder.py      JSONL episode logs + deterministic replay verification
-  renderer.py      pygame top-down view (normal mode draws from the Observation only)
+  renderer.py      pygame Scratch-style top-down view (normal mode draws from the Observation only)
   runner.py        CLI entry point
   replay.py        CLI: verify logs replay exactly
 ```

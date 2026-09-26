@@ -4,15 +4,17 @@
     uv run python -m blinddrive.runner --seed 42 --preset hard
     uv run python -m blinddrive.runner --seed 42 --debug   # shows the full road (dev only)
     uv run python -m blinddrive.runner --replay runs/<file>.jsonl
+    uv run python -m blinddrive.runner --fps 144           # render frame-rate cap
 
-One physics tick is simulated per rendered frame (60 fps), so simulated time
-runs at wall-clock speed when the machine keeps up, and slows down (never
-skips) when it does not. The simulation itself is identical to the headless one.
+Physics always runs at the fixed ``physics_hz`` (and decisions at ``decision_hz``);
+the render frame rate only affects how smoothly it is drawn. The simulation is
+identical to the headless one.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import random
 import sys
@@ -25,6 +27,9 @@ from .controllers import HumanController, ReplayController, controller_name
 from .controllers.base import Controller
 from .env import BlindDriveEnv
 from .recorder import default_log_path, load_log, write_log
+from .vehicle import VehicleState
+
+MAX_FRAME_TIME = 0.1  # seconds; longer frames are clipped (simulation slows down)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -35,18 +40,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--log-dir", default="runs", help="directory for episode JSONL logs")
     p.add_argument("--no-log", action="store_true", help="do not write episode logs")
     p.add_argument("--replay", metavar="FILE", help="visually replay a recorded episode log")
+    p.add_argument("--fps", type=int, default=120, help="render frame-rate cap (0 = uncapped); physics stays fixed")
     return p.parse_args(argv)
 
 
 def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: str | None,
-         autostart: bool = False, allow_new_seed: bool = True) -> None:
+         fps: int = 120, autostart: bool = False, allow_new_seed: bool = True) -> None:
     import pygame
 
-    from .renderer import Hud, Renderer, result_lines
+    from .renderer import Hud, Renderer
 
     renderer = Renderer(env.config, debug=debug)
     clock = pygame.time.Clock()
     name = controller_name(controller)
+    physics_dt = 1.0 / env.config.sim.physics_hz
 
     def start_episode() -> None:
         env.reset()
@@ -54,59 +61,78 @@ def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: st
 
     start_episode()
     phase = "running" if autostart else "ready"
-    ticks_since_decision = 999
+    accumulator = 0.0
+    since_decision = 999.0
+    prev_state = env.debug_view().state
 
     while True:
+        frame_dt = clock.tick(fps) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                 pygame.quit()
                 return
-            if event.type != pygame.KEYDOWN:
-                continue
-            if phase == "ready" and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                phase = "running"
-            elif phase == "over" and event.key == pygame.K_r:
+            start = (event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER)) or (
+                event.type == pygame.MOUSEBUTTONDOWN and renderer.flag_rect.collidepoint(event.pos))
+            if event.type == pygame.MOUSEBUTTONDOWN and renderer.stop_rect.collidepoint(event.pos):
+                pygame.quit()
+                return
+            if phase == "ready" and start:
+                phase, accumulator = "running", 0.0
+            elif phase == "over" and (start or (event.type == pygame.KEYDOWN and event.key == pygame.K_r)):
                 start_episode()
-                phase = "ready"
-            elif phase == "over" and event.key == pygame.K_n and allow_new_seed:
+                phase, prev_state = "ready", env.debug_view().state
+            elif phase == "over" and event.type == pygame.KEYDOWN and event.key == pygame.K_n and allow_new_seed:
                 env = BlindDriveEnv(env.config, random.randrange(1_000_000))
-                renderer.config = env.config
                 start_episode()
-                phase = "ready"
+                phase, prev_state = "ready", env.debug_view().state
 
+        # Fixed-step physics driven by wall-clock time. Rendering runs at its own
+        # rate and interpolates between the last two physics states. If the
+        # machine falls far behind, simulated time slows down instead of skipping.
         if phase == "running":
-            if env.decision_due:
-                env.apply_action(controller.act(env.observe()))
-                ticks_since_decision = 0
-            env.tick()
-            ticks_since_decision += 1
+            accumulator += min(frame_dt, MAX_FRAME_TIME)
+            since_decision += frame_dt
+            while accumulator >= physics_dt and not env.done:
+                prev_state = env.debug_view().state
+                if env.decision_due:
+                    env.apply_action(controller.act(env.observe()))
+                    since_decision = 0.0
+                env.tick()
+                accumulator -= physics_dt
             if env.done:
-                phase = "over"
+                phase, accumulator = "over", 0.0
                 report(env, name, log_dir)
 
-        overlay, color = None, (230, 234, 240)
+        dv = env.debug_view()  # privileged: used for camera motion and --debug only
+        alpha = min(1.0, accumulator / physics_dt) if phase == "running" else 1.0
+        message = None
         if phase == "ready":
-            overlay = [
-                "Press ENTER to start",
-                f"seed {env.seed}  ·  preset {env.config.name}  ·  {env.config.road.length:.0f} m",
-                f"You see {env.config.sim.lookahead:.0f} m ahead. You decide every "
-                f"{1000 / env.config.sim.decision_hz:.0f} ms.",
-                "Leave the road and the run is over. Nobody will save you.",
-            ]
-        elif phase == "over":
-            overlay, color = result_lines(env.result)
-
-        dv = env.debug_view()  # privileged: used for the motion grid and --debug only
+            message = (f"Ready? Press ENTER or click the green flag!\n"
+                       f"I can only see {env.config.sim.lookahead:.0f} m ahead, and I decide every "
+                       f"{1000 / env.config.sim.decision_hz:.0f} ms.\n"
+                       f"If we leave the road, the run is over.")
         renderer.draw(
             env.observe(),
             dv.state,
+            interpolate(prev_state, dv.state, alpha),
             Hud(seed=env.seed, controller=name, action=env.current_action,
-                ticks_since_decision=ticks_since_decision),
+                seconds_since_decision=since_decision, fps=clock.get_fps()),
             debug_view=dv if debug else None,
-            overlay=overlay,
-            overlay_color=color,
+            message=message,
+            result=env.result if phase == "over" else None,
         )
-        clock.tick(env.config.sim.physics_hz)
+
+
+def interpolate(a: VehicleState, b: VehicleState, t: float) -> VehicleState:
+    """Pose between two physics states, for drawing only."""
+    dh = (b.heading - a.heading + math.pi) % (2 * math.pi) - math.pi
+    return VehicleState(
+        x=a.x + (b.x - a.x) * t,
+        y=a.y + (b.y - a.y) * t,
+        heading=a.heading + dh * t,
+        speed=a.speed + (b.speed - a.speed) * t,
+        steering_angle=a.steering_angle + (b.steering_angle - a.steering_angle) * t,
+    )
 
 
 def report(env: BlindDriveEnv, name: str, log_dir: str | None) -> None:
@@ -126,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         env = BlindDriveEnv(log.config, log.seed)
         print(f"Replaying {Path(args.replay).name}: seed={log.seed} preset={log.header['preset']} "
               f"controller={log.header['controller']}")
-        play(env, ReplayController(log.actions), debug=args.debug, log_dir=None,
+        play(env, ReplayController(log.actions), debug=args.debug, log_dir=None, fps=args.fps,
              autostart=True, allow_new_seed=False)
         return 0
 
@@ -134,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     config = get_preset(args.preset)
     print(f"BlindDrive  seed={seed}  preset={config.name}")
     env = BlindDriveEnv(config, seed)
-    play(env, HumanController(), debug=args.debug, log_dir=None if args.no_log else args.log_dir)
+    play(env, HumanController(), debug=args.debug, log_dir=None if args.no_log else args.log_dir, fps=args.fps)
     return 0
 
 

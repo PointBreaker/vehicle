@@ -81,6 +81,8 @@ class Hud:
     action: Action | None
     seconds_since_decision: float
     fps: float = 0.0
+    edge_hits: int = 0
+    seconds_since_bump: float = 999.0
 
 
 def _hash(i: int, j: int) -> int:
@@ -179,6 +181,8 @@ class Renderer:
             self._draw_full_road(debug_view)
         self._draw_visible_road(obs, obs_state)
         self._draw_car(obs.steering_angle)
+        if obs.touching_edge:
+            self._draw_sparks(obs.lateral_offset)
         if self.debug and debug_view is not None:
             self._draw_debug(debug_view)
         self._draw_monitors(obs, hud)
@@ -186,6 +190,8 @@ class Renderer:
         self._draw_script(hud)
         self._draw_top_bar(hud, running=message is None and result is None)
         self._draw_help()
+        if message is None and result is None and hud.seconds_since_bump < 0.7:
+            message = "Bump!"
         if message:
             self._draw_speech(message)
         if result:
@@ -344,6 +350,22 @@ class Renderer:
             b = self.to_screen(head_x - rad * 0.8, k * rad * 0.35)
             pygame.draw.line(self.screen, CAT_DARK, a, b, 2)
 
+    def _draw_sparks(self, lateral_offset: float) -> None:
+        """Little star bursts on the side of the car that is scraping the edge."""
+        v = self.config.vehicle
+        side = 1.0 if lateral_offset > 0 else -1.0
+        t = pygame.time.get_ticks() / 1000.0
+        for k, along in enumerate((v.length * 0.4, -v.length * 0.35)):
+            cx, cy = self.to_screen(along, side * (v.width / 2 + 0.15))
+            r = self.ppm * (0.45 + 0.2 * math.sin(t * 40 + k * 2.1))
+            rot = t * 9 + k
+            star = []
+            for i in range(10):
+                rr = r if i % 2 == 0 else r * 0.42
+                a = rot + i * math.pi / 5
+                star.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
+            self._poly((255, 214, 0), star, outline=(255, 120, 0), width=2)
+
     # ------------------------------------------------------------ debug
 
     def _draw_full_road(self, dv: DebugView) -> None:
@@ -430,6 +452,8 @@ class Renderer:
         y = self._monitor(12, y, "speed", f"{obs.speed:.1f} m/s")
         y = self._monitor(12, y, "steering", f"{math.degrees(obs.steering_angle):+.0f}°")
         y = self._monitor(12, y, "time", f"{obs.elapsed_time:.1f} s")
+        if cfg.sim.edge == "wall":
+            y = self._monitor(12, y, "bumps", f"{hud.edge_hits}")
         y = self._monitor(12, y, "visible", f"{cfg.sim.lookahead:.0f} m")
         self._monitor(12, y, "decision every", f"{1000 / cfg.sim.decision_hz:.0f} ms")
 
@@ -547,7 +571,7 @@ class Renderer:
             title, color, dark = f"Crashed at {result.crash_distance:.1f} m", PINK, (230, 70, 100)
         else:
             title, color, dark = "Time's up", CONTROL, CONTROL_DARK
-        card = pygame.Rect(0, 0, 420, 250)
+        card = pygame.Rect(0, 0, 440, 276)
         card.center = (self.w / 2, TOP_BAR + (self.h - TOP_BAR) * 0.38)
         shadow = card.move(0, 6)
         pygame.draw.rect(self.screen, (120, 170, 95), shadow, border_radius=18)
@@ -563,6 +587,8 @@ class Renderer:
             ("top speed", f"{result.max_speed:.1f} m/s"),
             ("decisions", f"{result.decision_count}"),
         ]
+        if self.config.sim.edge == "wall":
+            rows.insert(3, ("bumps", f"{result.edge_hits}  ({result.edge_contact_time:.1f} s on the wall)"))
         y = head.bottom + 14
         for label, value in rows:
             self.screen.blit(self.text(label, 22), (card.x + 30, y))

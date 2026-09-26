@@ -6,8 +6,12 @@ Units: metres, seconds, radians unless the field name says ``_deg``.
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass, field
 from typing import Any
+
+
+EDGE_MODES = ("wall", "crash")
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,15 @@ class SimConfig:
     view_behind: float = 8.0        # visible road behind (arc length)
     observation_spacing: float = 1.0
 
+    # What happens when the car footprint reaches the road edge:
+    #   "wall"  - the edge is a barrier: the car cannot pass it and loses speed
+    #             (position is held inside the road; heading and controls are
+    #             never touched). The run continues.
+    #   "crash" - the episode ends immediately (strict benchmark mode).
+    edge: str = "wall"
+    edge_impact_speed_factor: float = 0.3   # speed multiplier on each new impact
+    edge_max_speed: float = 4.0             # m/s cap while touching the edge
+
 
 @dataclass(frozen=True)
 class GameConfig:
@@ -87,6 +100,16 @@ class GameConfig:
     vehicle: VehicleConfig = field(default_factory=VehicleConfig)
     road: RoadConfig = field(default_factory=RoadConfig)
     sim: SimConfig = field(default_factory=SimConfig)
+
+    def __post_init__(self) -> None:
+        if self.sim.edge not in EDGE_MODES:
+            raise ValueError(f"sim.edge must be one of {EDGE_MODES}, got {self.sim.edge!r}")
+        # The car must fit on the road in any orientation (wall mode relies on it).
+        if math.hypot(self.vehicle.length, self.vehicle.width) >= self.road.width:
+            raise ValueError("road must be wider than the car's diagonal")
+
+    def with_edge(self, edge: str) -> "GameConfig":
+        return dataclasses.replace(self, sim=dataclasses.replace(self.sim, edge=edge))
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)

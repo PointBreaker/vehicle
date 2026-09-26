@@ -4,7 +4,8 @@ BlindDrive is a small, auditable **partial-observation online driving benchmark*
 
 A car with inertia must finish a fixed-length random road as fast as possible
 while only seeing a limited stretch of road ahead. Every decision is made
-online, at a fixed rate, from a local observation. Crash and the run is over.
+online, at a fixed rate, from a local observation. Hit the edge and you lose a lot
+of speed (or, in strict `--edge crash` mode, the run is over).
 
 > **The environment owns physics. The controller owns decisions.**
 
@@ -21,7 +22,7 @@ The environment:
 
 - simulates, observes, and judges finish / crash / timeout — nothing else;
 - **never** corrects, overrides or filters an action: no auto-braking, no auto-steering,
-  no "keep in lane", no collision avoidance. If the controller is wrong, the car crashes.
+  no "keep in lane", no collision avoidance. If the controller is wrong, the car hits the edge.
 
 The human player goes through the exact same interface (`HumanController`), at the
 same decision rate, and the screen draws the road only from the `Observation`
@@ -39,6 +40,7 @@ uv run python -m blinddrive.runner --seed 42
 uv run python -m blinddrive.runner --seed 42 --preset hard
 uv run python -m blinddrive.runner --seed 42 --debug  # full road visible: development only
 uv run python -m blinddrive.runner --fps 144          # render frame-rate cap (default 120, 0 = uncapped)
+uv run python -m blinddrive.runner --edge crash       # strict mode: touching the edge ends the run
 uv run pytest
 ```
 
@@ -89,7 +91,7 @@ blinddrive/
   road.py          seeded road generation, projection, sampling (env-internal)
   vehicle.py       kinematic bicycle model with inertia and a grip limit
   observation.py   Observation dataclass + builder (the only thing controllers see)
-  env.py           BlindDriveEnv: decision schedule, physics ticks, crash/finish/timeout
+  env.py           BlindDriveEnv: decision schedule, physics ticks, edge walls, finish/timeout
   controllers/
     base.py        Controller protocol: reset(), act(observation) -> Action
     human.py       keyboard -> Action
@@ -135,6 +137,7 @@ due but missing. The schedule is enforced by the environment, not the runner.
 | `road_width`, `lookahead` | constants of the current preset |
 | `previous_action` | the action currently being held |
 | `elapsed_time`, `distance_travelled`, `distance_to_finish` | progress |
+| `touching_edge` | the car is scraping the road edge (wall mode) |
 
 The Observation contains only floats, tuples and the previous Action; no reference
 to the road or the environment.
@@ -164,8 +167,22 @@ Grip: lateral acceleration `v²κ` is capped at `sqrt(grip² − a_tyre²)`. Abo
 the car understeers (turns less than commanded). Braking hard therefore leaves less
 grip for turning: brake before the corner, not in it.
 
-The car footprint is a 4.2 × 1.8 m rectangle. The episode ends as a crash the moment
-any corner is farther than `road_width / 2` from the centerline.
+### Road edge
+
+The car footprint is a 4.2 × 1.8 m rectangle. It touches the edge when any corner is
+farther than `road_width / 2` from the centerline. What happens then is set by
+`sim.edge` (or `--edge`):
+
+- **`wall`** (default): the edge is a barrier. The car is moved back just inside the
+  road (position only), each new impact keeps 30 % of the speed, and while scraping
+  the car cannot go faster than 4 m/s. The run continues. There is also a wall just
+  behind the start line. Heading, steering and throttle are never touched: turning
+  away from the wall is the controller's job. The Observation has `touching_edge`,
+  the result counts `edge_hits` and `edge_contact_time`.
+- **`crash`**: the episode ends immediately (strict benchmark mode).
+
+With the default numbers, a "never brake, bounce off the walls" driver finishes
+roughly 10–15 % slower than one that brakes for corners.
 
 ### Road generation
 

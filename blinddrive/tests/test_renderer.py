@@ -14,7 +14,7 @@ from blinddrive.vehicle import VehicleState
 def test_renderer_draws_every_screen(preset, debug):
     from blinddrive.renderer import Hud, Renderer
 
-    env = BlindDriveEnv(get_preset(preset), 3)
+    env = BlindDriveEnv(get_preset(preset).with_edge("crash"), 3)
     r = Renderer(env.config, debug=debug)
     hud = Hud(seed=3, controller="test", action=None, seconds_since_decision=1.0, fps=120)
     dv = env.debug_view()

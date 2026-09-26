@@ -22,7 +22,7 @@ from pathlib import Path
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
-from .config import PRESETS, get_preset
+from .config import EDGE_MODES, PRESETS, get_preset
 from .controllers import HumanController, ReplayController, controller_name
 from .controllers.base import Controller
 from .env import BlindDriveEnv
@@ -36,6 +36,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="blinddrive", description="BlindDrive: drive with limited vision.")
     p.add_argument("--seed", type=int, default=None, help="road seed (default: random)")
     p.add_argument("--preset", choices=sorted(PRESETS), default="normal")
+    p.add_argument("--edge", choices=EDGE_MODES, default=None,
+                   help="road edge: 'wall' slows you down (default), 'crash' ends the run")
     p.add_argument("--debug", action="store_true", help="show the FULL road and internals (development only)")
     p.add_argument("--log-dir", default="runs", help="directory for episode JSONL logs")
     p.add_argument("--no-log", action="store_true", help="do not write episode logs")
@@ -56,13 +58,17 @@ def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: st
     physics_dt = 1.0 / env.config.sim.physics_hz
 
     def start_episode() -> None:
+        nonlocal last_hits
         env.reset()
         controller.reset()
+        last_hits = 0
 
+    last_hits = 0
     start_episode()
     phase = "running" if autostart else "ready"
     accumulator = 0.0
     since_decision = 999.0
+    since_bump = 999.0
     prev_state = env.debug_view().state
 
     while True:
@@ -92,6 +98,7 @@ def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: st
         if phase == "running":
             accumulator += min(frame_dt, MAX_FRAME_TIME)
             since_decision += frame_dt
+            since_bump += frame_dt
             while accumulator >= physics_dt and not env.done:
                 prev_state = env.debug_view().state
                 if env.decision_due:
@@ -99,6 +106,8 @@ def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: st
                     since_decision = 0.0
                 env.tick()
                 accumulator -= physics_dt
+                if env.edge_hits != last_hits:
+                    since_bump, last_hits = 0.0, env.edge_hits
             if env.done:
                 phase, accumulator = "over", 0.0
                 report(env, name, log_dir)
@@ -110,13 +119,15 @@ def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: st
             message = (f"Ready? Press ENTER or click the green flag!\n"
                        f"I can only see {env.config.sim.lookahead:.0f} m ahead, and I decide every "
                        f"{1000 / env.config.sim.decision_hz:.0f} ms.\n"
-                       f"If we leave the road, the run is over.")
+                       + ("Bumping the edge slows us down a lot." if env.config.sim.edge == "wall"
+                          else "If we leave the road, the run is over."))
         renderer.draw(
             env.observe(),
             dv.state,
             interpolate(prev_state, dv.state, alpha),
             Hud(seed=env.seed, controller=name, action=env.current_action,
-                seconds_since_decision=since_decision, fps=clock.get_fps()),
+                seconds_since_decision=since_decision, fps=clock.get_fps(),
+                edge_hits=env.edge_hits, seconds_since_bump=since_bump),
             debug_view=dv if debug else None,
             message=message,
             result=env.result if phase == "over" else None,
@@ -158,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
 
     seed = args.seed if args.seed is not None else random.randrange(1_000_000)
     config = get_preset(args.preset)
+    if args.edge:
+        config = config.with_edge(args.edge)
     print(f"BlindDrive  seed={seed}  preset={config.name}")
     env = BlindDriveEnv(config, seed)
     play(env, HumanController(), debug=args.debug, log_dir=None if args.no_log else args.log_dir, fps=args.fps)

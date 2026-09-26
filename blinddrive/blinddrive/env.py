@@ -5,6 +5,13 @@ The environment owns physics. The controller owns decisions.
 The environment only simulates, observes, and judges (finish / crash / timeout).
 It never modifies, overrides or "corrects" an action.
 
+Road edge (``sim.edge``):
+  * "wall"  (default): the edge is a barrier. When the car footprint reaches it,
+    the car's position is pushed back just inside the road (collision), it loses
+    speed on impact and is speed-capped while scraping. Heading, steering and
+    throttle are never touched: getting away from the wall is the controller's job.
+  * "crash": touching outside the road ends the episode immediately.
+
 Timing: physics runs at ``physics_hz``; a new decision is required every
 ``physics_hz / decision_hz`` ticks. Between decisions the last action is held.
 The environment enforces this schedule itself, so every runner (GUI,
@@ -13,7 +20,8 @@ headless, future AI harness) gives every controller the same decision rate.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import math
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from .actions import Action, validate_action
@@ -22,6 +30,10 @@ from .controllers.base import Controller
 from .observation import Observation, build_observation
 from .road import Road, generate_road
 from .vehicle import VehicleState, footprint, step_vehicle
+
+
+EDGE_CONTACT_MARGIN = 0.05   # m; within this distance of a wall counts as still touching
+START_WALL_MARGIN = 0.5      # m behind the car's rear at spawn
 
 
 class ProtocolError(RuntimeError):
@@ -41,6 +53,8 @@ class EpisodeResult:
     average_speed: float
     max_speed: float
     decision_count: int
+    edge_hits: int = 0                 # separate impacts with the edge (wall mode)
+    edge_contact_time: float = 0.0     # seconds spent scraping the edge (wall mode)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -77,6 +91,9 @@ class BlindDriveEnv:
         self._action: Action | None = None
         self._pending_decision = True
         self._max_speed = 0.0
+        self._touching_edge = False
+        self._edge_hits = 0
+        self._edge_contact_ticks = 0
         self._result: EpisodeResult | None = None
         self.decision_log: list[dict[str, Any]] = []
         return self.observe()
@@ -105,6 +122,10 @@ class BlindDriveEnv:
     def decision_count(self) -> int:
         return len(self.decision_log)
 
+    @property
+    def edge_hits(self) -> int:
+        return self._edge_hits
+
     # ------------------------------------------------------------ interface
 
     def observe(self) -> Observation:
@@ -118,6 +139,7 @@ class BlindDriveEnv:
             cfg=self.config.sim,
             previous_action=self._action,
             elapsed_time=self.elapsed_time,
+            touching_edge=self._touching_edge,
         )
 
     def apply_action(self, action: Action) -> None:
@@ -138,6 +160,7 @@ class BlindDriveEnv:
             "speed": st.speed,
             "steering_angle": st.steering_angle,
             "distance_travelled": self._progress,
+            "touching_edge": self._touching_edge,
             "observation": obs.to_dict(),
             "action": action.to_dict(),
         })
@@ -150,14 +173,31 @@ class BlindDriveEnv:
             raise ProtocolError("episode is over")
         if self._pending_decision:
             raise ProtocolError("a decision is due; call apply_action first")
-        vcfg = self.config.vehicle
-        self._state = step_vehicle(self._state, self._action, vcfg, self.dt)
+        sim = self.config.sim
+        state = step_vehicle(self._state, self._action, self.config.vehicle, self.dt)
+        crashed = False
+        if sim.edge == "wall":
+            state, depth = self._resolve_edge(state)
+            # A small margin keeps a car sliding along the wall "in contact"
+            # instead of registering a new impact every tick.
+            touching = depth > -EDGE_CONTACT_MARGIN
+            if touching:
+                speed = state.speed
+                if not self._touching_edge:
+                    self._edge_hits += 1
+                    speed *= sim.edge_impact_speed_factor
+                state = replace(state, speed=min(speed, sim.edge_max_speed))
+                self._edge_contact_ticks += 1
+            self._touching_edge = touching
+        else:
+            crashed = self._edge_violation(state)[0] > 0
+        self._state = state
         self._tick += 1
-        self._max_speed = max(self._max_speed, self._state.speed)
-        proj = self._road.project(self._state.x, self._state.y, self._progress, self._search_window())
+        self._max_speed = max(self._max_speed, state.speed)
+        proj = self._road.project(state.x, state.y, self._progress, self._search_window())
         self._progress = proj.s
 
-        if self._is_off_road():
+        if crashed:
             self._finish("crashed")
         elif self._progress >= self._road.length:
             self._finish("finished")
@@ -179,13 +219,44 @@ class BlindDriveEnv:
     def _search_window(self) -> float:
         return self.config.vehicle.length + self._state.speed * self.dt * 2 + 2.0
 
-    def _is_off_road(self) -> bool:
+    def _edge_violation(self, state: VehicleState) -> tuple[float, float, float]:
+        """Deepest penetration of the footprint into a wall.
+
+        Returns (depth, push_x, push_y): depth in metres (<= 0 means every corner is
+        inside), and the unit direction that moves the car back onto the road.
+        Walls are the two road edges plus a wall across the road just behind the start.
+        """
         half = self._road.width / 2
+        start_wall = -(self.config.vehicle.length / 2 + START_WALL_MARGIN)
         window = self._search_window()
-        for cx, cy in footprint(self._state, self.config.vehicle):
-            if abs(self._road.project(cx, cy, self._progress, window).lateral) > half:
-                return True
-        return False
+        worst = (-math.inf, 0.0, 0.0)
+        for cx, cy in footprint(state, self.config.vehicle):
+            proj = self._road.project(cx, cy, self._progress, window)
+            c, s = math.cos(proj.heading), math.sin(proj.heading)
+            side = abs(proj.lateral) - half
+            if side > worst[0]:
+                sign = -math.copysign(1.0, proj.lateral)   # back toward the centerline
+                worst = (side, -s * sign, c * sign)
+            behind = start_wall - proj.s
+            if behind > worst[0]:
+                worst = (behind, c, s)                     # forward along the road
+        return worst
+
+    def _resolve_edge(self, state: VehicleState) -> tuple[VehicleState, float]:
+        """Wall collision: translate the car back onto the road.
+
+        Only x/y change; heading, steering and speed are left exactly as the
+        physics produced them. Returns the new state and the initial penetration depth.
+        """
+        first_depth = None
+        for _ in range(6):
+            depth, px, py = self._edge_violation(state)
+            if first_depth is None:
+                first_depth = depth
+            if depth <= 0:
+                break
+            state = replace(state, x=state.x + px * (depth + 1e-6), y=state.y + py * (depth + 1e-6))
+        return state, first_depth
 
     def _finish(self, termination: str) -> None:
         t = self.elapsed_time
@@ -202,6 +273,8 @@ class BlindDriveEnv:
             average_speed=dist / t if t > 0 else 0.0,
             max_speed=self._max_speed,
             decision_count=len(self.decision_log),
+            edge_hits=self._edge_hits,
+            edge_contact_time=self._edge_contact_ticks * self.dt,
         )
 
 

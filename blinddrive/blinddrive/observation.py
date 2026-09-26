@@ -35,6 +35,7 @@ class Observation:
     elapsed_time: float
     distance_travelled: float       # progress along the centerline
     distance_to_finish: float
+    touching_edge: bool = False     # the car is scraping the road edge (wall mode)
 
     def to_dict(self, precision: int = 4) -> dict[str, Any]:
         r = lambda v: round(v, precision)  # noqa: E731
@@ -51,6 +52,7 @@ class Observation:
             "elapsed_time": r(self.elapsed_time),
             "distance_travelled": r(self.distance_travelled),
             "distance_to_finish": r(self.distance_to_finish),
+            "touching_edge": self.touching_edge,
         }
 
 
@@ -70,6 +72,7 @@ def build_observation(
     cfg: SimConfig,
     previous_action: Action | None,
     elapsed_time: float,
+    touching_edge: bool = False,
 ) -> Observation:
     pts = road.sample(progress - cfg.view_behind, progress + cfg.lookahead, cfg.observation_spacing)
     local = tuple(to_local(x, y, state) for x, y, _ in pts)
@@ -88,4 +91,5 @@ def build_observation(
         elapsed_time=elapsed_time,
         distance_travelled=progress,
         distance_to_finish=max(0.0, road.length - progress),
+        touching_edge=touching_edge,
     )

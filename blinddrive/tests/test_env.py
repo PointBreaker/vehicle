@@ -20,8 +20,8 @@ class Constant:
         return self.action
 
 
-def test_leaving_the_road_crashes():
-    env = BlindDriveEnv(normal(), 5)
+def test_leaving_the_road_crashes_in_crash_mode():
+    env = BlindDriveEnv(normal().with_edge("crash"), 5)
     result = run_episode(env, Constant(Action(Steering.HARD_LEFT, Throttle.FULL_ACCELERATE)))
     assert result.termination == "crashed"
     assert not result.success
@@ -31,7 +31,7 @@ def test_leaving_the_road_crashes():
 
 def test_crash_uses_footprint_not_centre():
     """Crash happens as soon as a corner leaves the road, while the centre is still on it."""
-    env = BlindDriveEnv(normal(), 5)
+    env = BlindDriveEnv(normal().with_edge("crash"), 5)
     run_episode(env, Constant(Action(Steering.SLIGHT_LEFT, Throttle.ACCELERATE)))
     assert env.result.termination == "crashed"
     obs = env.observe()
@@ -53,14 +53,14 @@ def test_same_seed_same_episode(tmp_path):
               [Action(Steering.LEFT, Throttle.ACCELERATE)] * 400
     logs = []
     for _ in range(2):
-        env = BlindDriveEnv(normal(), 11)
+        env = BlindDriveEnv(normal().with_edge("crash"), 11)
         run_episode(env, ReplayController(actions))
         logs.append(env.decision_log)
     assert logs[0] == logs[1]
 
 
 def test_log_roundtrip_and_replay(tmp_path):
-    env = BlindDriveEnv(normal(), 11)
+    env = BlindDriveEnv(normal().with_edge("crash"), 11)
     run_episode(env, Constant(Action(Steering.SLIGHT_RIGHT, Throttle.ACCELERATE)))
     path = write_log(tmp_path / "ep.jsonl", env, "constant")
     log = load_log(path)

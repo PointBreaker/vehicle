@@ -270,7 +270,7 @@ uv run python -m blinddrive.bench --dry-run --seed 42                # print a r
 
 Each decision line additionally carries `controller_info`: model, request id,
 latency, attempts, token usage, the answer with its confidence and full 35-way probability
-distributions, and the exact `state` sent. The header stores the questions and
+distribution, and the exact `state` sent. The header stores the questions and
 rules. `python -m blinddrive.replay` verifies Jev logs like any other (including
 aborted ones, up to the point of failure).
 

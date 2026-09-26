@@ -1,12 +1,11 @@
 """Jev (TypeSafe AI System One) as a BlindDrive controller.
 
 Each decision tick, the Observation is turned into a JSON ``state`` and Jev is
-asked two typed *choice* questions:
+asked one typed *choice* question over all 35 legal actions:
 
-    steering: one of the 7 Steering labels
-    throttle: one of the 5 Throttle labels
+    action: "<STEERING>+<THROTTLE>", e.g. "LEFT+BRAKE"
 
-Jev's chosen labels become the Action. Nothing else decides anything: there is
+Jev's chosen label is parsed back into the Action. Nothing else decides anything: there is
 no fallback policy, no heuristic override and no default action. If the API
 fails (after the client's retries) or answers with an unknown label, the
 controller raises and the episode is aborted and reported as an error.
@@ -27,12 +26,29 @@ from ..observation import Observation
 from ..typesafe import SystemOneResult, TypeSafeClient, TypeSafeConfig, TypeSafeError
 from ..vehicle import steering_target, tyre_acceleration
 
+ACTION_QUESTION = "action"
+LABEL_SEPARATOR = "+"
 PREVIEW_STEP = 5.0          # metres between "road_ahead" samples
 STRAIGHT_RADIUS = 300.0     # curves gentler than this are reported as straight
 
 
 class JevDecisionError(TypeSafeError):
     """Jev could not produce a legal decision; the episode must stop."""
+
+
+def action_label(action: Action) -> str:
+    return f"{action.steering.value}{LABEL_SEPARATOR}{action.throttle.value}"
+
+
+def parse_action_label(label: object) -> Action:
+    """Strictly parse "<STEERING>+<THROTTLE>"; anything else is an illegal answer."""
+    if not isinstance(label, str) or label.count(LABEL_SEPARATOR) != 1:
+        raise JevDecisionError(f"Jev returned an illegal action label {label!r}")
+    steering, throttle = label.split(LABEL_SEPARATOR)
+    try:
+        return Action(Steering(steering), Throttle(throttle))
+    except ValueError:
+        raise JevDecisionError(f"Jev returned an illegal action label {label!r}") from None
 
 
 def public_rules(config: GameConfig) -> dict[str, Any]:
@@ -87,25 +103,22 @@ def build_questions(config: GameConfig) -> dict[str, dict[str, Any]]:
         Throttle.FULL_ACCELERATE: "full acceleration",
     }
     return {
-        "steering": {
+        ACTION_QUESTION: {
             "type": "choice",
             "instructions": (
                 f"You are driving a car on a road you can only partly see (the next {sim.lookahead:g} m). "
-                f"Choose the steering target for the next {interval} ms. The wheels move toward the target at "
-                f"only {v.max_steering_rate_deg:g} deg/s, so steering must start early. Positive y / left means "
-                f"to the car's left. Follow the road and keep the whole car away from both edges."
-            ),
-            "criteria": {s.value: steer_desc(s, t) for s, t in steering.items()},
-        },
-        "throttle": {
-            "type": "choice",
-            "instructions": (
-                f"Choose throttle or brake for the next {interval} ms. Finish as fast as possible without hitting "
-                f"the road edges. The road beyond {sim.lookahead:g} m is unknown and may turn sharply, and braking "
+                f"Choose the steering target and the throttle/brake for the next {interval} ms. "
+                f"Finish as fast as possible without hitting the road edges. "
+                f"The wheels move toward the steering target at only {v.max_steering_rate_deg:g} deg/s, so steering "
+                f"must start early. The road beyond {sim.lookahead:g} m is unknown and may turn sharply, and braking "
                 f"needs distance. Tyre grip ({v.grip:g} m/s^2 in total) limits cornering speed, and braking hard "
-                f"while turning reduces how sharply the car can turn."
+                f"while turning reduces how sharply the car can turn. Left means the car's left."
             ),
-            "criteria": {t.value: f"{text} ({tyre_acceleration(t, v):+.0f} m/s^2)" for t, text in throttle.items()},
+            "criteria": {
+                action_label(Action(st, th)): f"steer {steer_desc(st, steering[st])}; "
+                                             f"{throttle[th]} ({tyre_acceleration(th, v):+.0f} m/s^2)"
+                for st in Steering for th in Throttle
+            },
         },
     }
 
@@ -177,17 +190,13 @@ def observation_to_state(obs: Observation, rules: dict[str, Any]) -> dict[str, A
     }
 
 
-def _pick(result: SystemOneResult, name: str, enum):
-    answer = result.answers.get(name)
+def _pick(result: SystemOneResult) -> tuple[Action, dict[str, Any]]:
+    answer = result.answers.get(ACTION_QUESTION)
     if not isinstance(answer, dict) or answer.get("type") != "choice":
-        raise JevDecisionError(f"Jev returned no choice answer for {name!r}: {answer!r}")
-    label = answer.get("choice")
-    try:
-        value = enum(label)
-    except ValueError:
-        raise JevDecisionError(f"Jev returned an illegal {name} label {label!r}") from None
-    return value, {
-        "choice": label,
+        raise JevDecisionError(f"Jev returned no choice answer for {ACTION_QUESTION!r}: {answer!r}")
+    action = parse_action_label(answer.get("choice"))
+    return action, {
+        "choice": answer.get("choice"),
         "confidence": answer.get("confidence"),
         "probabilities": answer.get("probabilities"),
     }
@@ -217,8 +226,7 @@ class JevController:
         state = observation_to_state(observation, self.rules)
         result = self.client.system_one(state, self.questions, model=self.model)
         self.calls += 1
-        steering, steer_info = _pick(result, "steering", Steering)
-        throttle, throttle_info = _pick(result, "throttle", Throttle)
+        action, answer = _pick(result)
         self.last_info = {
             "model": result.model,
             "request_id": result.request_id,
@@ -226,8 +234,7 @@ class JevController:
             "total_ms": round(result.total_s * 1000, 1),
             "attempts": result.attempts,
             "usage": result.usage,
-            "steering": steer_info,
-            "throttle": throttle_info,
+            "answer": answer,
             "state": state,
         }
-        return Action(steering, throttle)
+        return action

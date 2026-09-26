@@ -4,10 +4,12 @@ import math
 import pytest
 
 from blinddrive import bench
-from blinddrive.actions import Steering, Throttle
+from blinddrive.actions import ALL_ACTIONS, Action, Steering, Throttle
 from blinddrive.config import normal
 from blinddrive.controllers import Controller
-from blinddrive.controllers.jev import JevController, JevDecisionError, observation_to_state, public_rules
+from blinddrive.controllers.jev import (
+    JevController, JevDecisionError, action_label, observation_to_state, parse_action_label, public_rules,
+)
 from blinddrive.env import BlindDriveEnv, run_episode
 from blinddrive.recorder import load_log, verify_log
 from blinddrive.typesafe import (
@@ -36,14 +38,25 @@ def test_wire_format_matches_typesafe_api():
     assert headers["Content-Type"] == "application/json"
     assert set(body) == {"state", "model", "questions"}
     assert body["model"] == "jev-latest"
-    assert body["questions"]["steering"]["type"] == "choice"
-    assert list(body["questions"]["steering"]["criteria"]) == [s.value for s in Steering]
-    assert list(body["questions"]["throttle"]["criteria"]) == [t.value for t in Throttle]
+    assert list(body["questions"]) == ["action"]
+    question = body["questions"]["action"]
+    assert question["type"] == "choice"
+    assert list(question["criteria"]) == [action_label(a) for a in ALL_ACTIONS]
+    assert len(question["criteria"]) == 35
     assert (action.steering, action.throttle) == (Steering.STRAIGHT, Throttle.ACCELERATE)
     info = ctl.last_info
     assert info["request_id"] == "req-1"
-    assert info["steering"]["confidence"] == 0.7
-    assert math.isclose(sum(info["throttle"]["probabilities"].values()), 1.0)
+    assert info["answer"]["choice"] == "STRAIGHT+ACCELERATE"
+    assert info["answer"]["confidence"] == 0.7
+    assert math.isclose(sum(info["answer"]["probabilities"].values()), 1.0)
+
+
+def test_action_labels_roundtrip_and_are_strict():
+    for a in ALL_ACTIONS:
+        assert parse_action_label(action_label(a)) == a
+    for bad in ["LEFT", "LEFT+BRAKE+BRAKE", "left+brake", "TURBO+BRAKE", "LEFT+", None, 3]:
+        with pytest.raises(JevDecisionError):
+            parse_action_label(bad)
 
 
 def test_jev_controller_satisfies_interface():
@@ -99,9 +112,8 @@ def test_full_episode_logs_jev_answers(tmp_path):
         result = run_episode(env, JevController(cfg, client_for(fake)))
     assert result.decision_count == len(fake.requests) > 3
     for rec in env.decision_log:
-        info = rec["controller_info"]
-        assert info["steering"]["choice"] == rec["action"]["steering"]
-        assert info["throttle"]["choice"] == rec["action"]["throttle"]
+        chosen = parse_action_label(rec["controller_info"]["answer"]["choice"])
+        assert chosen == Action.from_dict(rec["action"])
 
 
 def test_missing_key_gives_clear_error():
@@ -142,7 +154,7 @@ def test_bench_cli_end_to_end(tmp_path, monkeypatch, capsys):
     assert len(logs) == 2
     for p in logs:
         log = load_log(p)
-        assert log.header["controller_meta"]["questions"]["steering"]["type"] == "choice"
+        assert log.header["controller_meta"]["questions"]["action"]["type"] == "choice"
         assert verify_log(log) == []
     summary = json.loads(next(tmp_path.glob("bench-*.json")).read_text())
     assert summary["summary"]["episodes"] == 2

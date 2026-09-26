@@ -31,6 +31,7 @@ from .controllers.base import Controller
 from .env import BlindDriveEnv, apply_decision
 from .recorder import default_log_path, load_log, write_log
 from .vehicle import VehicleState
+from .view import Frame, View
 
 MAX_FRAME_TIME = 0.1  # seconds; longer frames are clipped (simulation slows down)
 
@@ -53,12 +54,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: str | None,
-         fps: int = 120, autostart: bool = False, allow_new_seed: bool = True) -> None:
+         fps: int = 120, autostart: bool = False, allow_new_seed: bool = True,
+         view: View | None = None) -> None:
+    """Interactive loop: fixed-step physics, a view drawn at up to ``fps``.
+
+    ``view`` is anything implementing ``draw(Frame)`` / ``close()`` (default: the
+    minimal top-down pygame view). Keyboard input is read through pygame.
+    """
     import pygame
 
-    from .renderer import Hud, Renderer
+    if view is None:
+        from .renderer import TopDownRenderer
 
-    renderer = Renderer(env.config, debug=debug)
+        view = TopDownRenderer(debug=debug)
     clock = pygame.time.Clock()
     name = controller_name(controller)
     physics_dt = 1.0 / env.config.sim.physics_hz
@@ -71,48 +79,42 @@ def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: st
     error_text: str | None = None
 
     def start_episode() -> None:
-        nonlocal last_hits
         env.reset()
         controller.reset()
-        last_hits = 0
 
-    last_hits = 0
+    def quit_() -> None:
+        view.close()
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     start_episode()
     phase = "running" if autostart else "ready"
     accumulator = 0.0
-    since_decision = 999.0
-    since_bump = 999.0
     prev_state = env.debug_view().state
 
     while True:
         frame_dt = clock.tick(fps) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
-                _shutdown(executor)
+                quit_()
                 return
-            start = (event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER)) or (
-                event.type == pygame.MOUSEBUTTONDOWN and renderer.flag_rect.collidepoint(event.pos))
-            if event.type == pygame.MOUSEBUTTONDOWN and renderer.stop_rect.collidepoint(event.pos):
-                _shutdown(executor)
-                return
-            if phase == "ready" and start:
+            if event.type != pygame.KEYDOWN:
+                continue
+            if phase == "ready" and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 phase, accumulator = "running", 0.0
-            elif phase in ("over", "error") and (start or (event.type == pygame.KEYDOWN and event.key == pygame.K_r)):
+            elif phase in ("over", "error") and event.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER):
                 start_episode()
                 phase, prev_state, error_text = "ready", env.debug_view().state, None
-            elif (phase in ("over", "error") and event.type == pygame.KEYDOWN and event.key == pygame.K_n
-                  and allow_new_seed):
+            elif phase in ("over", "error") and event.key == pygame.K_n and allow_new_seed:
                 env = BlindDriveEnv(env.config, random.randrange(1_000_000))
                 start_episode()
                 phase, prev_state, error_text = "ready", env.debug_view().state, None
 
-        # Fixed-step physics driven by wall-clock time. Rendering runs at its own
+        # Fixed-step physics driven by wall-clock time. The view runs at its own
         # rate and interpolates between the last two physics states. If the
         # machine falls far behind, simulated time slows down instead of skipping.
         if phase == "running":
             accumulator += min(frame_dt, MAX_FRAME_TIME)
-            since_decision += frame_dt
-            since_bump += frame_dt
             while accumulator >= physics_dt and not env.done:
                 if env.decision_due:
                     if remote:
@@ -134,41 +136,40 @@ def play(env: BlindDriveEnv, controller: Controller, *, debug: bool, log_dir: st
                     else:
                         action = controller.act(env.observe())
                     apply_decision(env, controller, action)
-                    since_decision = 0.0
                 prev_state = env.debug_view().state
                 env.tick()
                 accumulator -= physics_dt
-                if env.edge_hits != last_hits:
-                    since_bump, last_hits = 0.0, env.edge_hits
             if env.done and phase == "running":
                 phase, accumulator = "over", 0.0
                 report(env, controller, name, log_dir)
 
-        dv = env.debug_view()  # privileged: used for camera motion and --debug only
+        dv = env.debug_view()  # privileged: used for the camera pose and --debug only
         alpha = min(1.0, accumulator / physics_dt) if phase == "running" else 1.0
-        message = None
+        status, message = phase, None
         if phase == "ready":
-            message = (f"Ready? Press ENTER or click the green flag!\n"
-                       f"I can only see {env.config.sim.lookahead:.0f} m ahead, and I decide every "
-                       f"{1000 / env.config.sim.decision_hz:.0f} ms.\n"
-                       + ("Bumping the edge slows us down a lot." if env.config.sim.edge == "wall"
-                          else "If we leave the road, the run is over."))
+            message = (f"press Enter to start\n"
+                       f"{env.config.sim.lookahead:.0f} m visible · decision every "
+                       f"{1000 / env.config.sim.decision_hz:.0f} ms")
         elif phase == "error":
-            message = "Oh no, the controller failed:\n" + _wrap(error_text or "", 60) + "\nR: retry   N: new seed   Esc: quit"
+            message = "controller failed\n" + _wrap(error_text or "", 80) + "\nR retry · N new seed · Esc quit"
         elif pending is not None and time.monotonic() - thinking_since > 0.15:
-            message = f"Thinking... {time.monotonic() - thinking_since:.1f} s"
-        renderer.draw(
-            env.observe(),
-            dv.state,
-            interpolate(prev_state, dv.state, alpha),
-            Hud(seed=env.seed, controller=name, action=env.current_action,
-                seconds_since_decision=since_decision, fps=clock.get_fps(),
-                edge_hits=env.edge_hits, seconds_since_bump=since_bump,
-                detail=controller_detail(controller)),
-            debug_view=dv if debug else None,
+            status, message = "thinking", f"thinking… {time.monotonic() - thinking_since:.1f} s"
+        view.draw(Frame(
+            config=env.config,
+            obs=env.observe(),
+            obs_state=dv.state,
+            camera=interpolate(prev_state, dv.state, alpha),
+            seed=env.seed,
+            controller=name,
+            action=env.current_action,
+            status=status,
+            edge_hits=env.edge_hits,
             message=message,
             result=env.result if phase == "over" else None,
-        )
+            detail=controller_detail(controller),
+            fps=clock.get_fps(),
+            debug_view=dv if debug else None,
+        ))
 
 
 def interpolate(a: VehicleState, b: VehicleState, t: float) -> VehicleState:
@@ -183,14 +184,6 @@ def interpolate(a: VehicleState, b: VehicleState, t: float) -> VehicleState:
     )
 
 
-def _shutdown(executor) -> None:
-    import pygame
-
-    pygame.quit()
-    if executor is not None:
-        executor.shutdown(wait=False, cancel_futures=True)
-
-
 def _wrap(text: str, width: int) -> str:
     return "\n".join(textwrap.wrap(text, width)[:4])
 
@@ -201,10 +194,9 @@ def controller_detail(controller: Controller) -> str | None:
     if not info:
         return None
     parts = [controller_name(controller)]
-    for key in ("steering", "throttle"):
-        conf = (info.get(key) or {}).get("confidence")
-        if isinstance(conf, (int, float)):
-            parts.append(f"{key} {conf:.0%}")
+    conf = (info.get("answer") or {}).get("confidence")
+    if isinstance(conf, (int, float)):
+        parts.append(f"confidence {conf:.0%}")
     if "latency_ms" in info:
         parts.append(f"{info['latency_ms']:.0f} ms")
     return "  ·  ".join(parts)

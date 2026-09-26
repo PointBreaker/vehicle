@@ -60,9 +60,11 @@ class FakeTypeSafe:
                     return
                 answers = {}
                 for name, q in body["questions"].items():
-                    label = fake.steering if name == "steering" else fake.throttle
+                    label = f"{fake.steering}+{fake.throttle}"
                     labels = list(q["criteria"])
                     probs = {lab: (0.7 if lab == label else 0.3 / (len(labels) - 1)) for lab in labels}
+                    if label not in probs:
+                        probs = {lab: 1 / len(labels) for lab in labels}
                     answers[name] = {"type": "choice", "choice": label, "confidence": 0.7, "probabilities": probs}
                 self._send(200, {"model": body["model"], "usage": {"input_tokens": 100, "output_tokens": 2},
                                  "answers": answers})

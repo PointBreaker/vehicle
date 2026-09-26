@@ -7,21 +7,7 @@ from blinddrive.config import PRESETS, get_preset
 from blinddrive.env import BlindDriveEnv, run_episode
 from blinddrive.runner import interpolate
 from blinddrive.vehicle import VehicleState
-
-
-@pytest.mark.parametrize("preset", sorted(PRESETS))
-@pytest.mark.parametrize("debug", [False, True])
-def test_renderer_draws_every_screen(preset, debug):
-    from blinddrive.renderer import Hud, Renderer
-
-    env = BlindDriveEnv(get_preset(preset).with_edge("crash"), 3)
-    r = Renderer(env.config, debug=debug)
-    hud = Hud(seed=3, controller="test", action=None, seconds_since_decision=1.0, fps=120)
-    dv = env.debug_view()
-    r.draw(env.observe(), dv.state, dv.state, hud, debug_view=dv, message="hello\nworld")
-    run_episode(env, _Constant(Action(Steering.LEFT, Throttle.FULL_ACCELERATE)))
-    dv = env.debug_view()
-    r.draw(env.observe(), dv.state, dv.state, hud, debug_view=dv, result=env.result)
+from blinddrive.view import Frame
 
 
 class _Constant:
@@ -33,6 +19,38 @@ class _Constant:
 
     def act(self, observation):
         return self.action
+
+
+def frame(env, **kw):
+    dv = env.debug_view()
+    base = dict(config=env.config, obs=env.observe(), obs_state=dv.state, camera=dv.state, seed=env.seed,
+                controller="test", action=env.current_action, status="running", edge_hits=env.edge_hits)
+    base.update(kw)
+    return Frame(**base)
+
+
+@pytest.mark.parametrize("preset", sorted(PRESETS))
+@pytest.mark.parametrize("debug", [False, True])
+def test_view_draws_every_screen(preset, debug):
+    from blinddrive.renderer import TopDownRenderer
+
+    env = BlindDriveEnv(get_preset(preset).with_edge("crash"), 3)
+    view = TopDownRenderer(debug=debug)
+    dv = env.debug_view() if debug else None
+    view.draw(frame(env, status="ready", message="press Enter\nsecond line", debug_view=dv))
+    run_episode(env, _Constant(Action(Steering.LEFT, Throttle.FULL_ACCELERATE)))
+    view.draw(frame(env, status="over", result=env.result, detail="jev · 80%"))
+    view.draw(frame(env, status="error", message="controller failed\nboom"))
+
+
+def test_view_does_not_draw_beyond_the_observation():
+    """In normal mode the view has nothing but the Observation to draw the road from."""
+    from blinddrive.renderer import TopDownRenderer
+
+    env = BlindDriveEnv(get_preset("normal"), 3)
+    f = frame(env)
+    assert f.debug_view is None
+    TopDownRenderer().draw(f)
 
 
 def test_interpolate_wraps_heading():

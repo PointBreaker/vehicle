@@ -61,20 +61,24 @@ Presets: `easy`, `normal`, `hard` (see `blinddrive/config.py`).
 | A / Left, D / Right | steer (hold Shift: hard) |
 | Q / E | slight left / slight right |
 | nothing | coast, straight |
-| Enter / green flag | start (and retry after a run) |
-| R · N · Esc / stop sign | retry same seed · new seed · quit |
+| Enter | start (and retry after a run) |
+| R · N · Esc | retry same seed · new seed · quit |
 
 Keys are read **only at decision ticks** (every 250 ms), exactly like any other controller.
 
 ### Display
 
-The view is a Scratch-style cartoon stage: the road is drawn only from the
-Observation and ends in a cloud at the visibility limit. The grass tufts and
-flowers are placed by a fixed hash of world position, independent of the road,
-so they give a sense of motion without revealing anything about where the road
-goes. The HUD shows the current decision as a little Scratch script
-(`when decision tick → steer … → throttle …`) whose hat block lights up at every
-decision.
+The view is deliberately minimal: the visible road (edges, a dashed centerline,
+the finish line when in sight), the car (a bar at its front tilts with the
+wheels; the car turns red while scraping an edge), and one line of status text.
+Beyond the lookahead there is nothing.
+
+The game loop hands the view one `Frame` per rendered frame (`view.py`): the
+Observation, the car pose, the held action, status/result text and, in `--debug`
+only, the full road. Any object with `draw(frame)` and `close()` can be the view,
+so a 3D renderer can replace `renderer.py: TopDownRenderer` without touching the
+game loop: `play(env, controller, view=MyView(), ...)`. A normal view must draw
+the road from `frame.obs` only.
 
 Rendering is decoupled from physics: physics always runs at `physics_hz` (60 Hz)
 and decisions at `decision_hz` (4 Hz); the screen is drawn at up to `--fps`
@@ -95,11 +99,12 @@ blinddrive/
     base.py        Controller protocol: reset(), act(observation) -> Action
     human.py       keyboard -> Action
     replay.py      replays a logged action sequence
-    jev.py         Jev: Observation -> JSON state -> two choice questions -> Action
+    jev.py         Jev: Observation -> JSON state -> one 35-way choice question -> Action
   typesafe.py      dependency-free TypeSafe System One API client (+ .env loader)
   bench.py         CLI: headless multi-seed runs for Jev, summary JSON
   recorder.py      JSONL episode logs + deterministic replay verification
-  renderer.py      pygame Scratch-style top-down view (normal mode draws from the Observation only)
+  view.py          Frame (everything a view may draw) + View interface (draw/close)
+  renderer.py      minimal top-down pygame View (normal mode draws from the Observation only)
   runner.py        CLI entry point
   replay.py        CLI: verify logs replay exactly
 ```
@@ -217,9 +222,11 @@ uv run python -m blinddrive.runner --replay runs/X.jsonl  # watch it
 ## Driving with Jev
 
 [Jev](https://typesafe.ai) is TypeSafe AI's System One model: it answers typed
-questions about a state with calibrated probabilities. BlindDrive asks it two
-*choice* questions every decision tick: `steering` (7 labels) and `throttle`
-(5 labels). The chosen labels are the Action.
+questions about a state with calibrated probabilities. BlindDrive asks it one
+*choice* question every decision tick, `action`, whose 35 labels are all legal
+actions written `STEERING+THROTTLE` (e.g. `LEFT+BRAKE`). The chosen label is
+parsed strictly back into the Action, so steering and throttle are always decided
+together.
 
 ### Setup (once)
 
@@ -249,8 +256,8 @@ uv run python -m blinddrive.bench --dry-run --seed 42                # print a r
   radius), progress, previous action — plus the public rules (limits, decision
   interval, edge rule). It is a pure function of the Observation: no seed, no road,
   nothing beyond the lookahead. `--dry-run` shows exactly what is sent.
-- **Questions** (`build_questions`): each label's description states its exact
-  effect (target wheel angle, acceleration in m/s²).
+- **Question** (`build_questions`): each of the 35 labels' description states its
+  exact effect (target wheel angle, turning radius, acceleration in m/s²).
 - **No fallback.** If the API fails after retries (2 retries with backoff for
   timeouts, 408/429/5xx) or returns an unknown label, the episode is aborted and
   reported as an error. There is never a default or heuristic action.
@@ -262,7 +269,7 @@ uv run python -m blinddrive.bench --dry-run --seed 42                # print a r
 ### Logs
 
 Each decision line additionally carries `controller_info`: model, request id,
-latency, attempts, token usage, both answers with confidence and full probability
+latency, attempts, token usage, the answer with its confidence and full 35-way probability
 distributions, and the exact `state` sent. The header stores the questions and
 rules. `python -m blinddrive.replay` verifies Jev logs like any other (including
 aborted ones, up to the point of failure).

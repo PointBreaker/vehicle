@@ -120,3 +120,12 @@ def test_wall_episode_replays_exactly(tmp_path):
     assert env.result.edge_hits >= 1
     log = load_log(write_log(tmp_path / "wall.jsonl", env, "constant"))
     assert verify_log(log) == []
+
+
+def test_stuck_car_ends_as_stalled():
+    """A car that stops making progress ends the run instead of burning decisions until timeout."""
+    env = BlindDriveEnv(normal(), 5)
+    drive(env, Action(Steering.HARD_LEFT, Throttle.FULL_ACCELERATE), 60.0)
+    assert env.done and env.result.termination == "stalled"
+    assert env.elapsed_time < 60
+    assert env.result.decision_count < 60 * 4

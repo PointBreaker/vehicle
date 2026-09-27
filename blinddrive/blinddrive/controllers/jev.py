@@ -26,6 +26,9 @@ from ..observation import Observation
 from ..typesafe import SystemOneResult, TypeSafeClient, TypeSafeConfig, TypeSafeError
 from ..vehicle import steering_target, tyre_acceleration
 
+# Bump whenever the state format, rules text or question wording changes:
+# scores from different harness versions are not directly comparable.
+HARNESS_VERSION = "jev-harness-v1"
 ACTION_QUESTION = "action"
 LABEL_SEPARATOR = "+"
 PREVIEW_STEP = 5.0          # metres between "road_ahead" samples
@@ -68,6 +71,11 @@ def public_rules(config: GameConfig) -> dict[str, Any]:
         "max_steering_angle_deg": v.max_steering_angle_deg,
         "steering_rate_deg_per_s": v.max_steering_rate_deg,
     }
+    rules["tightest_possible_curve_radius_m"] = config.road.sharp_radius[0]
+    if sim.action_delay_ms:
+        rules["action_delay_ms"] = sim.action_delay_ms
+        rules["action_delay"] = (f"Your decision takes effect {sim.action_delay_ms:g} ms after the state you "
+                                 f"see; until then the previous action keeps running.")
     if sim.edge == "wall":
         rules["road_edge"] = (f"The edges are walls. Hitting one keeps only {sim.edge_impact_speed_factor:.0%} of "
                               f"your speed, and while scraping it you cannot exceed {sim.edge_max_speed:g} m/s.")
@@ -204,6 +212,7 @@ def _pick(result: SystemOneResult) -> tuple[Action, dict[str, Any]]:
 
 class JevController:
     name = "jev"
+    harness = HARNESS_VERSION
     remote = True  # act() does network I/O; GUI runners call it off the render thread
 
     def __init__(self, config: GameConfig, client: TypeSafeClient, model: str | None = None):
@@ -228,6 +237,7 @@ class JevController:
         self.calls += 1
         action, answer = _pick(result)
         self.last_info = {
+            "harness": HARNESS_VERSION,
             "model": result.model,
             "request_id": result.request_id,
             "latency_ms": round(result.latency_s * 1000, 1),

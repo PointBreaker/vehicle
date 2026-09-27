@@ -101,7 +101,11 @@ blinddrive/
     replay.py      replays a logged action sequence
     jev.py         Jev: Observation -> JSON state -> one 35-way choice question -> Action
   typesafe.py      dependency-free TypeSafe System One API client (+ .env loader)
-  bench.py         CLI: headless multi-seed runs for Jev, summary JSON
+  baselines.py     reference controllers: crude (score 0), reference, oracle (score 100)
+  suite.py         CLI: certified-solvable seed suites with anchor times
+  scoring.py       effective time, normalised score, scorecard statistics
+  bench.py         CLI: headless evaluation of jev or a baseline on a suite
+  report.py        CLI: self-contained HTML report comparing runs
   recorder.py      JSONL episode logs + deterministic replay verification
   view.py          Frame (everything a view may draw) + View interface (draw/close)
   renderer.py      minimal top-down pygame View (normal mode draws from the Observation only)
@@ -239,14 +243,13 @@ uv run python -m blinddrive.bench --check      # verifies the key, lists models
 ### Run
 
 ```bash
-uv run python -m blinddrive.runner --controller jev --seed 42        # watch Jev drive
-uv run python -m blinddrive.bench --seeds 1-10 --preset normal       # headless, 10 episodes
-uv run python -m blinddrive.bench --seeds 1-10 --workers 4 --edge crash --model jev-latest
-uv run python -m blinddrive.bench --dry-run --seed 42                # print a request, send nothing
+uv run python -m blinddrive.runner --controller jev --seed 42           # watch Jev drive
+uv run python -m blinddrive.bench --suite suites/normal-dev.json --workers 4   # score Jev (20 seeds)
+uv run python -m blinddrive.bench --suite suites/hard-dev.json --delay-ms 250  # with a 250 ms reaction delay
+uv run python -m blinddrive.bench --dry-run --seed 42                   # print a request, send nothing
 ```
 
-`bench` prints one line per episode, a summary, and writes
-`runs/bench-<time>_<preset>_<model>.json` plus one JSONL log per episode.
+See [Evaluation](#evaluation) for what the numbers mean.
 
 ### What Jev sees and decides
 
@@ -264,7 +267,7 @@ uv run python -m blinddrive.bench --dry-run --seed 42                # print a r
 - **Latency does not count.** Simulated time is paused while waiting for Jev
   (the GUI keeps rendering and shows "Thinking…"). Real latency is logged.
 - **Cost.** One API call per decision: 4 per simulated second, so roughly 120–200
-  calls per 500 m episode (at most 720 before the 180 s timeout).
+  calls per 500 m episode. Hopeless runs end early as "stalled" (less than 5 m of progress in 20 s).
 
 ### Logs
 
@@ -273,6 +276,79 @@ latency, attempts, token usage, the answer with its confidence and full 35-way p
 distribution, and the exact `state` sent. The header stores the questions and
 rules. `python -m blinddrive.replay` verifies Jev logs like any other (including
 aborted ones, up to the point of failure).
+
+## Evaluation
+
+The goal is numbers you can trust and compare: every seed is proven solvable,
+every score is anchored to reference controllers on the same seed, and latency,
+safety and cost are reported next to the score, not folded into it.
+
+### Reference controllers (`baselines.py`)
+
+| name | what it is | role |
+|------|-----------|------|
+| `crude` | look 10 m ahead, hold 12 m/s | **score 0** |
+| `reference` | pure pursuit + a speed limit assuming the tightest legal curve may start just past the visible range; observation-only | proves solvability; typical score 75–90 |
+| oracle | the same planner with the whole road visible (privileged, anchor only) | **score 100** |
+
+They are measuring sticks only; nothing ever falls back to them. The oracle is a
+strong planner, not a proven optimum, so scores above 100 are possible.
+
+### Suites (`suite.py`)
+
+A suite is a list of seeds that the observation-only `reference` controller
+finishes without touching an edge, i.e. solvable with exactly the information a
+controller receives, together with the three anchor times for each seed and a
+fingerprint of the rules. `suites/{easy,normal,hard}-dev.json` (20 seeds each)
+are committed for development. For a real evaluation, build a private suite with
+secret seeds so nothing can be tuned or memorised against it:
+
+```bash
+uv run python -m blinddrive.suite build --preset hard --count 30 --random --out private/hard-test.json
+uv run python -m blinddrive.suite show suites/normal-dev.json
+```
+
+Loading a suite checks its fingerprint and re-runs one seed; if physics or
+baselines changed since it was built, it refuses to run ("rebuild the suite").
+
+### Scoring (`scoring.py`)
+
+- **Effective time**: elapsed time, plus distance not driven at 2 m/s if the run
+  did not finish (crash, stall, timeout, or controller error).
+- **Score per episode** = 100 × (T<sub>crude</sub> − T<sub>eff</sub>) / (T<sub>crude</sub> − T<sub>oracle</sub>),
+  floored at −100. Normalising per seed makes easy and hard roads count equally.
+- **Run score** = mean over episodes, with a 95% confidence interval.
+- Reported separately: finish rate, crashes / stalls / timeouts / errors, edge hits
+  and wall-contact time per episode, API latency p50/p95/max, decisions, tokens.
+- A run that gains less than 5 m in 20 s ends as **stalled** (this saves API calls
+  on hopeless runs and applies to every controller).
+
+### Latency
+
+Simulated time pauses while a remote controller thinks, so the default score is
+pure decision quality; the real API latency is still measured and reported.
+`--delay-ms N` adds a fixed, reproducible reaction delay: each action takes effect
+N ms after the observation it was based on (the previous action keeps running
+meanwhile, and Jev is told about the delay in its rules). Scores under delay use
+the zero-delay anchors, so the drop shows what latency costs. For reference, the
+`reference` controller on `hard-dev` scores about 75 without delay and about −45
+with 250 ms.
+
+### Reports (`report.py`)
+
+Every bench run writes `runs/bench-*.json` and a self-contained `runs/bench-*.html`.
+Put several runs side by side (scorecard + seed-by-seed table):
+
+```bash
+uv run python -m blinddrive.bench --suite suites/hard-dev.json --controller reference
+uv run python -m blinddrive.bench --suite suites/hard-dev.json --controller crude
+uv run python -m blinddrive.bench --suite suites/hard-dev.json               # jev
+uv run python -m blinddrive.report runs/bench-*.json -o runs/compare.html
+```
+
+The Jev harness (state format + question wording) carries a version
+(`jev-harness-v1`) that is stored in every log and run; scores from different
+harness versions are not directly comparable.
 
 ## Adding a controller
 

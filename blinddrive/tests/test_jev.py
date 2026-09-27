@@ -149,15 +149,21 @@ def test_bench_cli_end_to_end(tmp_path, monkeypatch, capsys):
         code = bench.main(["--seeds", "1-2", "--edge", "crash", "--log-dir", str(tmp_path), "--workers", "2"])
     out = capsys.readouterr().out
     assert code == 0
-    assert "jev-latest" in out and "finished 0/2" in out
+    assert "jev-latest" in out and "finished 0%" in out and "SCORE" in out
     logs = sorted(tmp_path.glob("*_jev.jsonl"))
     assert len(logs) == 2
     for p in logs:
         log = load_log(p)
         assert log.header["controller_meta"]["questions"]["action"]["type"] == "choice"
         assert verify_log(log) == []
-    summary = json.loads(next(tmp_path.glob("bench-*.json")).read_text())
-    assert summary["summary"]["episodes"] == 2
+    run = json.loads(next(tmp_path.glob("bench-*.json")).read_text())
+    card = run["scorecard"]
+    assert card["episodes"] == 2 and card["crashed"] == 2
+    assert card["score"]["mean"] < 0          # crashing early is worse than the crude rule
+    assert card["latency_ms"]["p50"] is not None
+    assert card["tokens"]["input"] == 100 * card["decisions"]
+    assert run["harness"] == "jev-harness-v1"
+    assert next(tmp_path.glob("bench-*.html")).read_text().startswith("<!doctype html>")
 
 
 def test_bench_records_api_failure(tmp_path, monkeypatch, capsys):
@@ -168,6 +174,9 @@ def test_bench_records_api_failure(tmp_path, monkeypatch, capsys):
         code = bench.main(["--seed", "4", "--log-dir", str(tmp_path)])
     assert code == 1
     assert "ERROR" in capsys.readouterr().out
+    run = json.loads(next(tmp_path.glob("bench-*.json")).read_text())
+    assert run["scorecard"]["errors"] == 1
+    assert run["episodes"][0]["score"] is not None   # an aborted run still scores (as unfinished)
     log = load_log(next(tmp_path.glob("*_jev.jsonl")))
     assert log.error is not None and log.result is None
     assert verify_log(log) == []

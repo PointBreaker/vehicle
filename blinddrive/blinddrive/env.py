@@ -24,6 +24,7 @@ import math
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
+from .actions import DEFAULT_ACTION as NO_INPUT
 from .actions import Action, validate_action
 from .config import GameConfig
 from .controllers.base import Controller
@@ -45,7 +46,7 @@ class EpisodeResult:
     seed: int
     preset: str
     success: bool
-    termination: str                   # "finished" | "crashed" | "timeout"
+    termination: str                   # "finished" | "crashed" | "stalled" | "timeout"
     completion_time: float | None      # only when success
     elapsed_time: float
     distance_travelled: float
@@ -78,6 +79,9 @@ class BlindDriveEnv:
         self.seed = seed
         self.dt = 1.0 / sim.physics_hz
         self.ticks_per_decision = sim.physics_hz // sim.decision_hz
+        if sim.action_delay_ms < 0:
+            raise ValueError("action_delay_ms must be >= 0")
+        self.delay_ticks = round(sim.action_delay_ms / 1000 * sim.physics_hz)
         self._road = generate_road(seed, config.road)
         self.reset()
 
@@ -88,12 +92,15 @@ class BlindDriveEnv:
         self._state = VehicleState(x=x, y=y, heading=h, speed=0.0, steering_angle=0.0)
         self._progress = 0.0
         self._tick = 0
-        self._action: Action | None = None
+        self._action: Action | None = None       # latest decision
+        self._applied: Action | None = None      # action the physics is executing
+        self._queue: list[tuple[int, Action]] = []   # (tick it takes effect, action)
         self._pending_decision = True
         self._max_speed = 0.0
         self._touching_edge = False
         self._edge_hits = 0
         self._edge_contact_ticks = 0
+        self._stall_mark = (0.0, 0)              # (progress, tick) of the last real progress
         self._result: EpisodeResult | None = None
         self.decision_log: list[dict[str, Any]] = []
         return self.observe()
@@ -116,7 +123,9 @@ class BlindDriveEnv:
 
     @property
     def current_action(self) -> Action | None:
-        return self._action
+        """The action the car is executing right now (differs from the latest
+        decision while ``action_delay_ms`` has not elapsed)."""
+        return self._applied
 
     @property
     def decision_count(self) -> int:
@@ -163,8 +172,13 @@ class BlindDriveEnv:
             "touching_edge": self._touching_edge,
             "observation": obs.to_dict(),
             "action": action.to_dict(),
+            "applies_at_tick": self._tick + self.delay_ticks,
         })
         self._action = action
+        if self.delay_ticks == 0:
+            self._applied = action
+        else:
+            self._queue.append((self._tick + self.delay_ticks, action))
         self._pending_decision = False
 
     def tick(self) -> None:
@@ -174,7 +188,11 @@ class BlindDriveEnv:
         if self._pending_decision:
             raise ProtocolError("a decision is due; call apply_action first")
         sim = self.config.sim
-        state = step_vehicle(self._state, self._action, self.config.vehicle, self.dt)
+        while self._queue and self._queue[0][0] <= self._tick:
+            self._applied = self._queue.pop(0)[1]
+        # Before the first decision takes effect (only with a delay), the car,
+        # which starts at rest, simply rolls with no input.
+        state = step_vehicle(self._state, self._applied or NO_INPUT, self.config.vehicle, self.dt)
         crashed = False
         if sim.edge == "wall":
             state, depth = self._resolve_edge(state)
@@ -197,10 +215,15 @@ class BlindDriveEnv:
         proj = self._road.project(state.x, state.y, self._progress, self._search_window())
         self._progress = proj.s
 
+        if self._progress >= self._stall_mark[0] + sim.stall_distance:
+            self._stall_mark = (self._progress, self._tick)
+
         if crashed:
             self._finish("crashed")
         elif self._progress >= self._road.length:
             self._finish("finished")
+        elif (self._tick - self._stall_mark[1]) * self.dt >= sim.stall_timeout - 1e-9:
+            self._finish("stalled")
         elif self.elapsed_time >= self.config.sim.timeout - 1e-9:
             self._finish("timeout")
         elif self._tick % self.ticks_per_decision == 0:

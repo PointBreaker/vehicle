@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 blinddrive/runs/
 blinddrive/.env
+blinddrive/private/

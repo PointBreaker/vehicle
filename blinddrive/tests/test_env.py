@@ -103,3 +103,37 @@ def test_human_decides_only_at_decision_ticks():
     env.tick()
     env.apply_action(human.act(env.observe()))
     assert env.current_action.throttle is Throttle.HARD_BRAKE
+
+
+def test_action_delay_holds_previous_action():
+    import dataclasses
+
+    cfg = normal()
+    cfg = dataclasses.replace(cfg, sim=dataclasses.replace(cfg.sim, action_delay_ms=500))
+    env = BlindDriveEnv(cfg, 3)
+    assert env.delay_ticks == 30
+    env.apply_action(Action(Steering.STRAIGHT, Throttle.FULL_ACCELERATE))
+    assert env.decision_log[0]["applies_at_tick"] == 30
+    def step():
+        if env.decision_due:
+            env.apply_action(Action(Steering.STRAIGHT, Throttle.FULL_ACCELERATE))
+        env.tick()
+
+    for _ in range(30):                              # ticks 0..29: the decision is not in effect yet
+        step()
+    assert env.debug_view().state.speed == 0.0      # the car stays at rest
+    step()                                           # tick 30: it takes effect
+    assert env.debug_view().state.speed > 0.0
+    assert env.current_action.throttle is Throttle.FULL_ACCELERATE
+
+
+def test_delayed_episode_replays_exactly(tmp_path):
+    import dataclasses
+
+    cfg = normal().with_edge("crash")
+    cfg = dataclasses.replace(cfg, sim=dataclasses.replace(cfg.sim, action_delay_ms=250))
+    env = BlindDriveEnv(cfg, 11)
+    run_episode(env, Constant(Action(Steering.SLIGHT_RIGHT, Throttle.ACCELERATE)))
+    log = load_log(write_log(tmp_path / "d.jsonl", env, "constant"))
+    assert log.config.sim.action_delay_ms == 250
+    assert verify_log(log) == []

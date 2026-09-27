@@ -1,0 +1,463 @@
+{
+ "format": "blinddrive-suite-v1",
+ "name": "easy-dev",
+ "created": "2026-09-27T08:00:00",
+ "blinddrive_version": "0.1.0",
+ "scoring": "score-v2",
+ "preset": "easy",
+ "fingerprint": "ae1d5953f96a101b",
+ "config": {
+  "name": "easy",
+  "vehicle": {
+   "length": 4.2,
+   "width": 1.8,
+   "wheelbase": 2.6,
+   "max_speed": 22.0,
+   "max_acceleration": 4.0,
+   "max_braking": 8.0,
+   "partial_throttle": 0.5,
+   "partial_brake": 0.5,
+   "rolling_resistance": 0.3,
+   "drag_coefficient": 0.0012,
+   "grip": 9.0,
+   "max_steering_angle_deg": 30.0,
+   "max_steering_rate_deg": 60.0,
+   "slight_steer_fraction": 0.16666666666666666,
+   "steer_fraction": 0.5
+  },
+  "road": {
+   "length": 500.0,
+   "width": 10.0,
+   "runout": 60.0,
+   "sample_spacing": 0.5,
+   "start_straight": 30.0,
+   "straight_length": [
+    15.0,
+    60.0
+   ],
+   "gentle_radius": [
+    70.0,
+    150.0
+   ],
+   "gentle_angle_deg": [
+    20.0,
+    50.0
+   ],
+   "sharp_radius": [
+    30.0,
+    45.0
+   ],
+   "sharp_angle_deg": [
+    45.0,
+    110.0
+   ],
+   "segment_weights": [
+    0.35,
+    0.4,
+    0.25
+   ],
+   "smoothing_window": 10.0,
+   "heading_bias_scale_deg": 45.0,
+   "max_heading_deviation_deg": 150.0,
+   "min_clearance_widths": 2.0,
+   "max_attempts": 100
+  },
+  "sim": {
+   "physics_hz": 60,
+   "decision_hz": 4,
+   "timeout": 180.0,
+   "stall_timeout": 20.0,
+   "stall_distance": 5.0,
+   "lookahead": 40.0,
+   "view_behind": 8.0,
+   "observation_spacing": 1.0,
+   "edge": "wall",
+   "edge_impact_speed_factor": 0.3,
+   "edge_max_speed": 4.0,
+   "action_delay_ms": 0.0
+  }
+ },
+ "seeds": [
+  {
+   "seed": 1000,
+   "solvable": true,
+   "reference": {
+    "time": 27.3833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.05,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1001,
+   "solvable": true,
+   "reference": {
+    "time": 28.4667,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.05,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.8833,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1002,
+   "solvable": true,
+   "reference": {
+    "time": 27.15,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1333,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 26.85,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1003,
+   "solvable": true,
+   "reference": {
+    "time": 27.25,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 26.95,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1004,
+   "solvable": true,
+   "reference": {
+    "time": 26.9833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1667,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 26.8167,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1005,
+   "solvable": true,
+   "reference": {
+    "time": 27.6,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.25,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1006,
+   "solvable": true,
+   "reference": {
+    "time": 28.4667,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.0833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.8167,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1007,
+   "solvable": true,
+   "reference": {
+    "time": 28.1167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.0833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.6,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1008,
+   "solvable": true,
+   "reference": {
+    "time": 28.6,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 28.1833,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1009,
+   "solvable": true,
+   "reference": {
+    "time": 27.5833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1333,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.25,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1010,
+   "solvable": true,
+   "reference": {
+    "time": 26.9333,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1667,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 26.75,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1011,
+   "solvable": true,
+   "reference": {
+    "time": 28.5167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.0333,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.9333,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1012,
+   "solvable": true,
+   "reference": {
+    "time": 27.7167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.0833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.3,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1013,
+   "solvable": true,
+   "reference": {
+    "time": 29.9167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 47.95,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 29.1333,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1014,
+   "solvable": true,
+   "reference": {
+    "time": 27.1167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1333,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 26.8333,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1015,
+   "solvable": true,
+   "reference": {
+    "time": 27.75,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.35,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1016,
+   "solvable": true,
+   "reference": {
+    "time": 27.7167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.3167,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1017,
+   "solvable": true,
+   "reference": {
+    "time": 26.6333,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 26.5167,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1018,
+   "solvable": true,
+   "reference": {
+    "time": 28.1833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.0833,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.75,
+    "finished": true,
+    "edge_hits": 0
+   }
+  },
+  {
+   "seed": 1019,
+   "solvable": true,
+   "reference": {
+    "time": 27.35,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "floor": {
+    "time": 48.1167,
+    "finished": true,
+    "edge_hits": 0
+   },
+   "oracle": {
+    "time": 27.0333,
+    "finished": true,
+    "edge_hits": 0
+   }
+  }
+ ],
+ "rejected": []
+}

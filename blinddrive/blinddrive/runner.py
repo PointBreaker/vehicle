@@ -205,7 +205,8 @@ def controller_detail(controller: Controller) -> str | None:
 def controller_meta(controller: Controller) -> dict | None:
     if not hasattr(controller, "questions"):
         return None
-    return {"model": getattr(controller, "model", None), "questions": controller.questions,
+    return {"model": getattr(controller, "model", None), "harness": getattr(controller, "harness", None),
+            "questions": controller.questions,
             "rules": getattr(controller, "rules", None)}
 
 

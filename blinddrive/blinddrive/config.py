@@ -78,6 +78,10 @@ class SimConfig:
     physics_hz: int = 60
     decision_hz: int = 4
     timeout: float = 180.0          # seconds of simulated time
+    # A run that gains less than stall_distance metres of progress within
+    # stall_timeout seconds ends as "stalled" (stuck on a wall, stopped, ...).
+    stall_timeout: float = 20.0
+    stall_distance: float = 5.0
 
     # Partial observation.
     lookahead: float = 30.0         # visible road ahead (arc length)
@@ -92,6 +96,11 @@ class SimConfig:
     edge: str = "wall"
     edge_impact_speed_factor: float = 0.3   # speed multiplier on each new impact
     edge_max_speed: float = 4.0             # m/s cap while touching the edge
+
+    # Fixed, deterministic reaction delay: an action takes effect this long after
+    # the observation it was decided on (rounded to physics ticks). Until then the
+    # previous action keeps running. 0 = the action applies immediately.
+    action_delay_ms: float = 0.0
 
 
 @dataclass(frozen=True)
